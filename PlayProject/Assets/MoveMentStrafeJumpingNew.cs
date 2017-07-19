@@ -12,6 +12,8 @@ namespace QuakeMovement.Movement
 
         private Transform m_cameraTransform;
 
+        private GrapplingHook hookController;
+
 
         public float m_gravity      = 20.0f;
         public float m_friction     = 6.0f;
@@ -19,15 +21,18 @@ namespace QuakeMovement.Movement
         public float m_moveSpeed    = 7.0f;
         public float m_groundAcc = 14.0f;
         public float m_groundDeAcc = 10.0f;
+        [Space(10)]
+        public float m_airMoveSpeed = 20.0f;
         public float m_airAcc = 2.0f;
         public float m_airDeAcc = 2.0f;
         public float m_airControl = 0.2f;
-        public float m_airMoveSpeed = 20.0f;
+        [Space(10)]
         public float m_sideStrafeAcc = 50.0f;
         public float m_sideStrafeSpeed = 1.0f;
         public float m_jumpSpeed = 8.0f;
         public float m_moveScale = 1.0f;
 
+        [Space(10)]
         public float m_xMouseSens = 30.0f;
         public float m_yMouseSens = 30.0f;
 
@@ -35,6 +40,7 @@ namespace QuakeMovement.Movement
         Image m_groundedIndicator;
         float m_maxY = 0.0f;
         float m_maxYvel = 0.0f;
+        Vector3 m_horizontalVelocity = Vector3.zero;
 
         private float m_fpsDisplayRate = 4.0f; // Shouldn't be necessary. Seems weird.
 
@@ -52,6 +58,9 @@ namespace QuakeMovement.Movement
         private bool m_wishJump = false;
         public float m_doubleJumpThreshold = 0.4f;
         public float m_doubleJumpTimer = 0.0f;
+
+        // temporary variables
+        private float t_dotProduct = 0.0f;
 
         class Cmd
         {
@@ -72,7 +81,7 @@ namespace QuakeMovement.Movement
             //m_cameraTransform.position.y = this.transform.position.y + 0.6f;
             Cursor.lockState = CursorLockMode.Locked;
            
-
+            hookController = GetComponent<GrapplingHook>();
             m_mouseLook = GetComponent<MouseController>();
             cmd = new Cmd();
             m_speedometer = GameObject.Find("Speedometer").GetComponent<Text>();
@@ -86,6 +95,7 @@ namespace QuakeMovement.Movement
             m_verticalMeter = GameObject.Find("vertVelText").GetComponent<Text>();
             m_jumpTimer = GameObject.Find("jumpTimerText").GetComponent<Text>();
             m_groundedIndicator = GameObject.Find("groundedIndicator").GetComponent<Image>();
+            
         }
 
         // Update is called once per frame
@@ -93,6 +103,7 @@ namespace QuakeMovement.Movement
         {
             //Debug.Log(transform.rotation);
             m_previousVelocity = m_playerVelocity;
+            m_horizontalVelocity = new Vector3(m_playerVelocity.x, 0, m_playerVelocity.z);
             m_rotX -= Input.GetAxisRaw("Mouse Y") * m_xMouseSens * 0.02f;
             m_rotY += Input.GetAxisRaw("Mouse X") * m_yMouseSens * 0.02f;
             
@@ -121,6 +132,7 @@ namespace QuakeMovement.Movement
                 AirMove();
             }
 
+            m_playerVelocity = hookController.ManageGrapplingHook(m_playerVelocity);
             m_characterController.Move(m_playerVelocity * Time.deltaTime);
 
             m_doubleJumpTimer += Time.deltaTime;
@@ -134,7 +146,7 @@ namespace QuakeMovement.Movement
 
         private void UpdateGUI()
         {
-            m_speedometer.text = Mathf.Round(m_playerVelocity.magnitude).ToString();
+            m_speedometer.text = Mathf.Round(m_horizontalVelocity.magnitude).ToString();
             m_camRotMeter.text = "Cam Rotation: " + m_cameraTransform.rotation.ToString();
             m_tranRotMeter.text = "Trans Rotation: " + transform.rotation.ToString();
             m_ctrlRotMeter.text = "Ctrl Rotation: " + m_characterController.transform.rotation.ToString();
@@ -168,7 +180,7 @@ namespace QuakeMovement.Movement
             verticalString += yVel.ToString("F2") + " ( " + m_maxYvel.ToString("F2") + ")";
             m_verticalMeter.text = verticalString;
 
-            m_jumpTimer.text = "Jump Timer: " + m_doubleJumpTimer;
+            m_jumpTimer.text = "Jump Timer: " + t_dotProduct;
 
     }
 
@@ -188,10 +200,10 @@ namespace QuakeMovement.Movement
             SetMovementDir();
 
             //wishDirection = new Vector3(cmd.m_rightMove, 0, cmd.m_forwardMove);
-            //wishDirection += transform.TransformDirection(wishDirection); //Maybe issues. Consult old code
+            //wishDirection += transform.TransformDirection(wishDirection); 
 
-            Vector3 forwardVector = m_cameraTransform.forward;
-            Vector3 rightVector = m_cameraTransform.right;
+            Vector3 forwardVector = transform.forward;
+            Vector3 rightVector = transform.right;
             wishDirection.x = forwardVector.x * cmd.m_forwardMove + rightVector.x * cmd.m_rightMove;
             wishDirection.z = forwardVector.z * cmd.m_forwardMove + rightVector.z * cmd.m_rightMove;
 
@@ -201,6 +213,7 @@ namespace QuakeMovement.Movement
 
             float wishSpeed = wishDirection.magnitude;
             wishSpeed *= m_moveSpeed;
+            //wishSpeed *= scale;
 
             Accelerate(wishDirection, wishSpeed, m_groundAcc);
 
@@ -250,7 +263,7 @@ namespace QuakeMovement.Movement
 
             float wishSpeed = wishDirection.magnitude;
             wishSpeed *= m_airMoveSpeed;
-            wishSpeed *= scale;
+            //wishSpeed *= scale;
 
             wishDirection.Normalize();
             m_moveDirectionNormalized = wishDirection;
@@ -287,9 +300,10 @@ namespace QuakeMovement.Movement
 
         private void AirControl(Vector3 p_wishDir, float p_wishSpeed)
         {
-            float zSpeed, speed, dot, k;
+            float ySpeed, speed, dot;
+            float k = 32.0f;
 
-            zSpeed = m_playerVelocity.y;
+            ySpeed = m_playerVelocity.y;
             m_playerVelocity.y = 0;
             speed = m_playerVelocity.magnitude;
             m_playerVelocity.Normalize();
@@ -298,21 +312,20 @@ namespace QuakeMovement.Movement
             //    return;
 
             dot = Vector3.Dot(m_playerVelocity, p_wishDir);
-            k = 32.0f;
-            k *= m_airControl * dot * dot * Time.deltaTime;
-            
-            if(dot > 0)
+            t_dotProduct = dot;
+            if(dot > 0.0f)
             {
+                k *= m_airControl * dot * dot * Time.deltaTime;
                 m_playerVelocity.x = m_playerVelocity.x * speed + p_wishDir.x * k;
-                //m_playerVelocity.y = m_playerVelocity.y * speed + p_wishDir.y * k;
                 m_playerVelocity.z = m_playerVelocity.z * speed + p_wishDir.z * k;
 
                 m_playerVelocity.Normalize();
                 m_moveDirectionNormalized = m_playerVelocity;
             }
 
+
             m_playerVelocity.x *= speed;
-            m_playerVelocity.y = zSpeed;
+            m_playerVelocity.y = ySpeed;
             m_playerVelocity.z *= speed;
         }
 
@@ -333,7 +346,7 @@ namespace QuakeMovement.Movement
                 accelSpeed = addSpeed;
             }
             m_playerVelocity.x += accelSpeed * p_wishDir.x;
-            m_playerVelocity.y += accelSpeed * p_wishDir.y;
+            //m_playerVelocity.y += accelSpeed * p_wishDir.y;
             m_playerVelocity.z += accelSpeed * p_wishDir.z;
         }
 

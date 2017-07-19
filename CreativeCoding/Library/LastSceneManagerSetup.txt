@@ -1,0 +1,4 @@
+sceneSetups:
+- path: Assets/TranslucenceScene.unity
+  isLoaded: 1
+  isActive: 1
